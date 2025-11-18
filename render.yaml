@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: saini-txt-direct
+    name: COURSEWALLAH BOT
     plan: free
     env: docker
     dockerfilePath: Dockerfile
