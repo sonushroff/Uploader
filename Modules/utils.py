@@ -18,19 +18,27 @@ class Timer: #NIKHIL SAINI BOTS
         return False #NIKHIL SAINI BOTS
 
 #lets do calculations #NIKHIL SAINI BOTS
-def hrb(value, digits= 2, delim= "", postfix=""): #NIKHIL SAINI BOTS
-    """Return a human-readable file size. #NIKHIL SAINI BOTS
-    """ #NIKHIL SAINI BOTS
-    if value is None: #NIKHIL SAINI BOTS
-        return None #NIKHIL SAINI BOTS
-    chosen_unit = "B" #NIKHIL SAINI BOTS
-    for unit in ("KB", "MB", "GB", "TB"): #NIKHIL SAINI BOTS
-        if value > 1000: #NIKHIL SAINI BOTS
-            value /= 1024 #NIKHIL SAINI BOTS
-            chosen_unit = unit #NIKHIL SAINI BOTS
-        else: #NIKHIL SAINI BOTS
-            break #NIKHIL SAINI BOTS
-    return f"{value:.{digits}f}" + delim + chosen_unit + postfix #NIKHIL SAINI BOTS
+def hrb(value, digits=2, delim="", postfix=""):
+    """Return a human-readable file size."""
+    if value is None:
+        return None
+
+    # yaha protection: agar string / error aa jaye to crash na ho
+    try:
+        value = float(value)
+    except (TypeError, ValueError):
+        # agar number nahi hai to simple string return kar do
+        return str(value)
+
+    chosen_unit = "B"
+    for unit in ("KB", "MB", "GB", "TB"):
+        if value > 1000:
+            value /= 1024
+            chosen_unit = unit
+        else:
+            break
+    return f"{value:.{digits}f}" + delim + chosen_unit + postfix
+
 
 def hrt(seconds, precision = 0): #NIKHIL SAINI BOTS
     """Return a human-readable time delta as a string. #NIKHIL SAINI BOTS
@@ -104,3 +112,4 @@ async def progress_bar(current, total, reply, start): #NIKHIL SAINI BOTS
                 await reply.edit(f'<blockquote>`╭──⌯═════𝐁𝐨𝐭 𝐒𝐭𝐚𝐭𝐢𝐜𝐬══════⌯──╮\n├⚡ {progress_bar}\n├⚙️ Progress ➤ | {perc} |\n├🚀 Speed ➤ | {sp} |\n├📟 Processed ➤ | {cur} |\n├🧲 Size ➤ | {tot} |\n├🕑 ETA ➤ | {eta} |\n╰─═══✨🦋{CREDIT}🦋✨═══─╯`</blockquote>') 
             except FloodWait as e: #NIKHIL SAINI BOTS
                 time.sleep(e.x) #NIKHIL SAINI BOTS 
+
