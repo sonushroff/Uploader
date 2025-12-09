@@ -1,15 +1,31 @@
 import os
+import re
 import requests
 import subprocess
 from vars import CREDIT
 from pyrogram import Client, filters
 from pyrogram.types import Message
 
-#==================================================================================================================================
+# ======================================================================
+# Utils
+# ======================================================================
 
-# Function to extract names and URLs from the text file
-def extract_names_and_urls(file_content):
-    lines = file_content.strip().split("\n")
+def sanitize_filename(name: str, ext: str) -> str:
+    """Safe filename generate karo."""
+    base = "".join(c if c.isalnum() or c in "._- " else "_" for c in name).strip()
+    if not base:
+        base = "file"
+    if not ext.startswith("."):
+        ext = "." + ext
+    return base + ext
+
+
+def extract_names_and_urls(file_content: str):
+    """
+    txt se lines read karke `name : url` tuples banata hai.
+    ek line = NAME : URL
+    """
+    lines = file_content.strip().splitlines()
     data = []
     for line in lines:
         if ":" in line:
@@ -17,9 +33,7 @@ def extract_names_and_urls(file_content):
             data.append((name.strip(), url.strip()))
     return data
 
-#==================================================================================================================================
 
-# Function to categorize URLs
 def categorize_urls(urls):
     videos = []
     pdfs = []
@@ -27,37 +41,54 @@ def categorize_urls(urls):
 
     for name, url in urls:
         new_url = url
-        if ("akamaized.net/" in url or "1942403233.rsc.cdn77.org/" in url) and ".pdf" not in url:
-            vid_id = url.split("/")[-2]
-            new_url = f"https://www.khanglobalstudies.com/player?src={url}"
+
+        # akamai / cdn m3u8 style
+        if ("akamaized.net/" in url or "rsc.cdn77.org/" in url) and ".pdf" not in url:
+            # agar player wrap karna hai to yaha karo
+            new_url = url
             videos.append((name, new_url))
 
         elif "youtu" in url:
+            # basic normalise – embed -> watch
             if "youtube.com/embed" in url:
                 yt_id = url.split("/")[-1]
                 new_url = f"https://www.youtube.com/watch?v={yt_id}"
-            videos.append((name, url))
-            
+            videos.append((name, new_url))
+
         elif ".m3u8" in url:
             videos.append((name, url))
-        elif ".mp4" in url:
+
+        elif ".mp4" in url or ".mov" in url or ".m4v" in url:
             videos.append((name, url))
-        elif "pdf" in url:
+
+        elif ".pdf" in url:
             pdfs.append((name, url))
+
         else:
             others.append((name, url))
 
     return videos, pdfs, others
 
-#=================================================================================================================================
 
-# Function to generate HTML file with Video.js player
+# ======================================================================
+# HTML generator (same feature + little cleaning)
+# ======================================================================
+
 def generate_html(file_name, videos, pdfs, others):
     file_name_without_extension = os.path.splitext(file_name)[0]
 
-    video_links = "".join(f'<a href="#" onclick="playVideo(\'{url}\')">{name}</a>' for name, url in videos)
-    pdf_links = "".join(f'<a href="{url}" target="_blank">{name}</a>' for name, url in pdfs)
-    other_links = "".join(f'<a href="{url}" target="_blank">{name}</a>' for name, url in others)
+    video_links = "".join(
+        f'<a href="#" onclick="playVideo(\'{url}\')">{name}</a>'
+        for name, url in videos
+    )
+    pdf_links = "".join(
+        f'<a href="{url}" target="_blank">{name}</a>'
+        for name, url in pdfs
+    )
+    other_links = "".join(
+        f'<a href="{url}" target="_blank">{name}</a>'
+        for name, url in others
+    )
 
     html_template = f"""
 <!DOCTYPE html>
@@ -419,45 +450,140 @@ def generate_html(file_name, videos, pdfs, others):
     """
     return html_template
 
-# Function to download video using FFmpeg
-def download_video(url, output_path):
-    command = f"ffmpeg -i {url} -c copy {output_path}"
-    subprocess.run(command, shell=True, check=True)
+
+# ======================================================================
+# Download helpers
+# ======================================================================
+
+def download_pdf(url: str, output_path: str):
+    resp = requests.get(url, stream=True, timeout=120)
+    resp.raise_for_status()
+    with open(output_path, "wb") as f:
+        for chunk in resp.iter_content(chunk_size=8192):
+            if chunk:
+                f.write(chunk)
 
 
+def download_video(url: str, output_path: str):
+    """
+    ffmpeg se video (m3u8/mp4) download karta hai.
+    system me ffmpeg installed hona chahiye.
+    """
+    cmd = [
+        "ffmpeg",
+        "-y",          # overwrite
+        "-i", url,
+        "-c", "copy",
+        output_path,
+    ]
+    subprocess.run(cmd, check=True)
 
 
-#======================================================================================================================================================================================
+# ======================================================================
+# Main handler
+# ======================================================================
 
 async def html_handler(bot: Client, message: Message):
-    editable = await message.reply_text("𝐖𝐞𝐥𝐜𝐨𝐦𝐞! 𝐏𝐥𝐞𝐚𝐬𝐞 𝐮𝐩𝐥𝐨𝐚𝐝 𝐚 .𝐭𝐱𝐭 𝐟𝐢𝐥𝐞 𝐜𝐨𝐧𝐭𝐚𝐢𝐧𝐢𝐧𝐠 𝐔𝐑𝐋𝐬.✓")
-    input: Message = await bot.listen(editable.chat.id)
-    if input.document and input.document.file_name.endswith('.txt'):
-        file_path = await input.download()
+    editable = await message.reply_text("📝 .txt file bhejo jisme `Name : URL` ho.")
+    input_msg: Message = await bot.listen(editable.chat.id)
+
+    if input_msg.document and input_msg.document.file_name.endswith(".txt"):
+        file_path = await input_msg.download()
         file_name, ext = os.path.splitext(os.path.basename(file_path))
-        b_name = file_name.replace('_', ' ')
+        b_name = file_name.replace("_", " ")
     else:
-        await message.reply_text("**• Invalid file input.**")
+        await message.reply_text("❌ Sirf .txt file support hai.")
         return
-           
-    with open(file_path, "r") as f:
+
+    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
         file_content = f.read()
 
     urls = extract_names_and_urls(file_content)
-
     videos, pdfs, others = categorize_urls(urls)
 
+    # 1) HTML generate + send
     html_content = generate_html(file_name, videos, pdfs, others)
     html_file_path = file_path.replace(".txt", ".html")
-    with open(html_file_path, "w") as f:
+    with open(html_file_path, "w", encoding="utf-8") as f:
         f.write(html_content)
 
-    await message.reply_document(document=html_file_path, caption=f"✅𝐒𝐮𝐜𝐜𝐞𝐬𝐬𝐟𝐮𝐥𝐥𝐲 𝐃𝐨𝐧𝐞!\n<blockquote><b>`{b_name}`</b></blockquote>\n❖**Open in Chrome.**\n\n🌟**Extracted By : {CREDIT}**")
-    os.remove(file_path)
-    os.remove(html_file_path)
-    
-#============================================================================================================================
-def register_html_handlers(bot):
+    await message.reply_document(
+        document=html_file_path,
+        caption=(
+            f"✅ HTML Ready\n"
+            f"`{b_name}`\n"
+            f"Chrome me open karo.\n\n"
+            f"Extracted by: {CREDIT}"
+        ),
+    )
+
+    # 2) PDFs download + send
+    if pdfs:
+        await message.reply_text(f"📚 {len(pdfs)} PDF mil gaye. Ab download + send kar raha hoon…")
+    for idx, (name, url) in enumerate(pdfs, start=1):
+        safe_name = sanitize_filename(name, ".pdf")
+        pdf_path = os.path.join(os.getcwd(), safe_name)
+
+        try:
+            await editable.edit(f"⏬ PDF {idx}/{len(pdfs)}\n`{name}`")
+            download_pdf(url, pdf_path)
+        except Exception as e:
+            await message.reply_text(f"❌ PDF fail: `{name}`\n`{e}`")
+            if os.path.exists(pdf_path):
+                os.remove(pdf_path)
+            continue
+
+        try:
+            await message.reply_document(
+                document=pdf_path,
+                caption=f"[PDF] {name}\nExtracted by {CREDIT}",
+            )
+        finally:
+            if os.path.exists(pdf_path):
+                os.remove(pdf_path)
+
+    # 3) Videos download + send
+    if videos:
+        await message.reply_text(f"🎬 {len(videos)} video mil gaye. Ab download + send kar raha hoon…\n"
+                                 f"⚠️ Time & data thoda zyada lag sakta hai.")
+
+    for idx, (name, url) in enumerate(videos, start=1):
+        safe_name = sanitize_filename(name, ".mp4")
+        video_path = os.path.join(os.getcwd(), safe_name)
+
+        try:
+            await editable.edit(f"⏬ Video {idx}/{len(videos)}\n`{name}`")
+            download_video(url, video_path)
+        except Exception as e:
+            await message.reply_text(f"❌ Video fail: `{name}`\n`{e}`")
+            if os.path.exists(video_path):
+                os.remove(video_path)
+            continue
+
+        try:
+            await message.reply_video(
+                video=video_path,
+                caption=f"[VIDEO] {name}\nExtracted by {CREDIT}",
+                supports_streaming=True,
+            )
+        finally:
+            if os.path.exists(video_path):
+                os.remove(video_path)
+
+    # final cleanup
+    if os.path.exists(file_path):
+        os.remove(file_path)
+    if os.path.exists(html_file_path):
+        os.remove(html_file_path)
+
+    await editable.delete()
+
+
+# ======================================================================
+# Register
+# ======================================================================
+
+def register_html_handlers(bot: Client):
     @bot.on_message(filters.command(["t2h"]))
     async def call_html_handler(bot: Client, message: Message):
         await html_handler(bot, message)
